@@ -1,44 +1,36 @@
 runRelease = function(s, codebase){
     function release(s, codebase){
         try{
-            //var dir = {
-            //    support: "C:/Scripts/" + codebase + "/switch/process/support/"
-            //}
+            var dir = {
+                support: "C:/Scripts/" + codebase + "/switch/process/support/"
+            }
 
             // Read in any support directories
-            //eval(File.read(dir.support + "/general-functions.js"));
-            //eval(File.read(dir.support + "/connect-to-db.js"));
-            //eval(File.read(dir.support + "/load-module-settings.js"));
-            //eval(File.read(dir.support + "/get-column-index.js"));
-            //eval(File.read(dir.support + "/sql-statements.js"));
+            eval(File.read(dir.support + "/general-functions.js"));
+            eval(File.read(dir.support + "/connect-to-db.js"));
+            eval(File.read(dir.support + "/load-module-settings.js"));
 
             // Load settings from the module
-            //var module = loadModuleSettings(s)
+            var module = loadModuleSettings(s)
 
             // Establist connection to the databases
-            /*
             var connections = establishDatabases(s, module)
             var db = {
                 settings: new Statement(connections.settings),
                 history: new Statement(connections.history),
                 email: new Statement(connections.email)
             }
-                */
             
             var secondInterval = 5;
                 s.setTimerInterval(secondInterval);
 
             var debug = s.getPropertyValue("debug") == "Yes";
             var transfer = s.getPropertyValue("transfer") == "Yes";
-            var now = new Date();
             var count, stock
 
             if(debug){
                 s.log(-1, "Auto Transfer Enabled: " + transfer)
             }
-            
-            // Set the threshold that the system waits
-            var threshold = 15 * 60000;
             
             // Set some directories.
             var xmlRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/queue_phoenix");
@@ -53,11 +45,31 @@ runRelease = function(s, codebase){
                 var map = doc.createDefaultMap();
                 var layouts = doc.evalToNodes('//job/layouts/layout', map);
                 var projectID = doc.evalToString('//job/id', map);
-                var dueDate = "2025-02-20" //doc.evalToString('//*[local-name()="Product"]/@DueDate', map);
+
+                // Pull the URL from the database.
+                db.history.execute("SELECT * FROM history.details_gang WHERE `gang-number` = '" + projectID + "' order by ID desc;");
+
+                // If the row doesn't exist, skip the job and send a notification.
+                if(!db.history.isRowAvailable()){
+                    newCSV.setPrivateData("message","Undefined");
+                    newCSV.setPrivateData("status","undefined");
+                    newCSV.setPrivateData("error", "Gang not found in history database.");
+                    newCSV.setPrivateData("channel","Prisma Updates");
+                    newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
+                    continue;
+                }
+
+                // Pull the row data.
+                db.history.fetchRow();
+
+                // Assign some values from the database.
+                var virtualPrinter = db.history.getString(25);
+                var dueDate = db.history.getString(6);
 
                 // Create the job to use in the flow.
                 var filePath = xmlRepository.absPath + "/" + xmlFiles[i]
                 var newCSV = s.createNewJob(filePath);
+                    newCSV.setUserEmail(db.history.getString(12));
 
                 // Target the files in the correct repository.
                 var pdfRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID);
@@ -68,42 +80,10 @@ runRelease = function(s, codebase){
                 // If all of the files are in the repository, compile and send to Prisma.
                 if(pdfFiles.length == layouts.length){
 
-                    // Pull some data from the Metrix xml.
-                    stock = doc.evalToString('//job/layouts/layout/surfaces/surface/stock/name', map);
+                    // Assemple some data.
                     count = doc.evalToString('//job/run-length', map);
                     height = 0;
-
-                    stockSheet = doc.evalToString('//job/layouts/layout/surfaces/surface/sheet/height', map);
-
-                    //if(stock == "80-lb-Paper-Gloss"){
-                        stock = "80PG";
-                        send = true;
-                    //}
-
-                    if(stock == "80-lb-Paper-Matte"){
-                        stock = "80PM";
-                        send = true;
-                    }
-
-                    if(stock == "100-lb-Paper-Gloss"){
-                        stock = "100PG"
-                        send = true;
-                    }
-
-                    if(stock == "100-lb-Paper-Matte"){
-                        stock = "100PM"
-                        send = true;
-                    }
-
-                    if(!send){
-                            newCSV.setPrivateData("message","Undefined Stock");
-                            newCSV.setPrivateData("status","undefined");
-                            newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
-                        continue;
-                    }
-
-                    //stock = stock + "_" + height
-                    stock = stock + "_80PG"
+                    stock = virtualPrinter + "_80m"
 
                     // Create the VM template file
                     var octFile = new File(pdfRepository.path + "/" + stock + ".oct");
@@ -113,6 +93,8 @@ runRelease = function(s, codebase){
                         octFile.open(File.Append);
                         octFile.writeLine('[job]')
                         octFile.writeLine('Printer_Setup_Name=' + stock)
+                        octFile.writeLine('Message=yes')
+                        octFile.writeLine('Message_Text=Test-For-Hamik')
                         octFile.write('Due_Date=' + dueDate + 'T00:00:00-06:00')
                         octFile.close();
 
@@ -122,8 +104,7 @@ runRelease = function(s, codebase){
                     }
 
                     // Create the cmd line.
-                    var command = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock + '.oct -jn ' + projectID + ' -nc ' + count + ' -f ' + pdfFiles.reverse().toString().replace(/,/g,' ');
-                    //var movexml = 'robocopy "C:/Switch/Landing/CanonPrismaServer/queue/" "C:/Switch/Landing/CanonPrismaServer/complete/" ' + projectID + '.xml /mov /s'
+                    var command = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock + '.oct -jn ' + projectID + ' -nc ' + count + ' -f ' + pdfFiles.toString().replace(/,/g,' ');
 
                     if(debug){
                         s.log(-1, command)
@@ -136,7 +117,6 @@ runRelease = function(s, codebase){
                     }
                         batFile.open(File.Append);
                         batFile.writeLine(command)
-                        //batFile.write(movexml)
                         batFile.close()
 
                     // Automatically execute the command.
@@ -145,9 +125,13 @@ runRelease = function(s, codebase){
                         if(Process.stderr == ""){
                             newCSV.setPrivateData("message","Transferred Successfully");
                             newCSV.setPrivateData("status","complete");
+                            newCSV.setPrivateData("error", "None");
+                            newCSV.setPrivateData("channel","Prisma Done");
                         }else{
                             newCSV.setPrivateData("message","Transfer Failed");
                             newCSV.setPrivateData("status","failed");
+                            newCSV.setPrivateData("error", Process.stderr);
+                            newCSV.setPrivateData("channel","Prisma Fail")
                         }
                         newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
                     }

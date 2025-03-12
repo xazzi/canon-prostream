@@ -64,15 +64,10 @@ runRelease = function(s, codebase){
                 var pdfRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID);
                 var pdfFiles = pdfRepository.entryList("*.pdf", Dir.Files, Dir.Name);
 
-                var send = false;
-
                 // If all of the files are in the repository, compile and send to Prisma.
                 if(pdfFiles.length == layouts.length){
 
                     // Pull some data from the Metrix mxml.
-                    //stock = doc.evalToString('//*[local-name()="Stock"]/@Name', map).replace(/\./g,'').replace(/ /g,'-');
-                    //stock = doc.evalToNodes('//*[local-name()="Stock"]', map);
-
                     count = doc.evalToString('//*[local-name()="Layout"]/@SheetsRequired', map);
                     height = 0;
 
@@ -94,13 +89,15 @@ runRelease = function(s, codebase){
                     if(!stock.found){
                         newCSV.setPrivateData("message","Undefined Stock");
                         newCSV.setPrivateData("status","undefined");
+                        newCSV.setPrivateData("error", "Gang not found in history database.");
+                        newCSV.setPrivateData("channel","Prisma Updates");
                         newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
                         continue;
                     }
 
                     // Add the height onto the stock name.
-                    stock.name = stock.name + "_" + height
-
+                    stock.name = stock.name + "_80m"
+                    
                     // Create the VM template file
                     var octFile = new File(pdfRepository.path + "/" + stock.name + ".oct");
                     if(octFile.exists){
@@ -119,7 +116,6 @@ runRelease = function(s, codebase){
 
                     // Create the cmd line.
                     var command = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock.name + '.oct -jn ' + projectID + ' -nc ' + count + ' -f ' + pdfFiles.reverse().toString().replace(/,/g,' ');
-                    //var moveMXML = 'robocopy "C:/Switch/Landing/CanonPrismaServer/queue/" "C:/Switch/Landing/CanonPrismaServer/complete/" ' + projectID + '.mxml /mov /s'
 
                     if(debug){
                         s.log(-1, command)
@@ -132,7 +128,6 @@ runRelease = function(s, codebase){
                     }
                         batFile.open(File.Append);
                         batFile.writeLine(command)
-                        //batFile.write(moveMXML)
                         batFile.close()
 
                     // Automatically execute the command.
@@ -141,9 +136,13 @@ runRelease = function(s, codebase){
                         if(Process.stderr == ""){
                             newCSV.setPrivateData("message","Transferred Successfully");
                             newCSV.setPrivateData("status","complete");
+                            newCSV.setPrivateData("error", "None");
+                            newCSV.setPrivateData("channel","Prisma Done")
                         }else{
                             newCSV.setPrivateData("message","Transfer Failed");
                             newCSV.setPrivateData("status","failed");
+                            newCSV.setPrivateData("error", Process.stderr);
+                            newCSV.setPrivateData("channel","Prisma Fail")
                         }
                         newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
                     }
@@ -211,6 +210,12 @@ function getStock(s, doc, map){
         if(node == "100-lb-Paper-Matte"){
             stock.found = true;
             stock.name = "100PM";
+            return stock
+        }
+
+        if(node == "70-lb-Paper-Uncoated"){
+            stock.found = true;
+            stock.name = "70PU";
             return stock
         }
     }

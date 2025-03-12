@@ -11,7 +11,7 @@ Client_Street=
 Client_Tel=
 Client_ZIP=
 [eMailReporting_global]
-FileType=pdf
+FileType=xls
 ReportTemplate=StandardOCE_InkControl
 _Service=eMailReporting
 [filedefaults]
