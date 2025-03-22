@@ -85,6 +85,10 @@ runRelease = function(s, codebase){
                     height = 0;
                     stock = virtualPrinter + "_80m"
 
+                    if(count > 32767){
+                        //count = 32767
+                    }
+
                     // Create the VM template file
                     var octFile = new File(pdfRepository.path + "/" + stock + ".oct");
                     if(octFile.exists){
@@ -93,8 +97,10 @@ runRelease = function(s, codebase){
                         octFile.open(File.Append);
                         octFile.writeLine('[job]')
                         octFile.writeLine('Printer_Setup_Name=' + stock)
-                        octFile.writeLine('Message=yes')
-                        octFile.writeLine('Message_Text=Test-For-Hamik')
+                        //octFile.writeLine('PDF_Preflight=yes')
+                        //octFile.writeLine('PDF_Preflight_PathSeparator=:|_|:')
+                        //octFile.writeLine('PDF_Preflight_PreflightActions=/u/prismapro/lib/pdf_preflight/actions/GetPagesBoxes.eal:|_|:/u/prismapro/lib/pdf_preflight/actions/#02a) Down Sample Image to 300 & 600 DPI.eal')
+                        //octFile.writeLine('PDF_Preflight_PreflightPageRange=all')
                         octFile.write('Due_Date=' + dueDate + 'T00:00:00-06:00')
                         octFile.close();
 
