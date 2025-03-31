@@ -20,13 +20,16 @@ runRelease = function(s, codebase){
                 history: new Statement(connections.history),
                 email: new Statement(connections.email)
             }
+
+            var threshold = 15 * 60000;
+            var now = new Date();
             
             var secondInterval = 5;
                 s.setTimerInterval(secondInterval);
 
             var debug = s.getPropertyValue("debug") == "Yes";
             var transfer = s.getPropertyValue("transfer") == "Yes";
-            var count, stock
+            var count
 
             if(debug){
                 s.log(-1, "Auto Transfer Enabled: " + transfer)
@@ -40,73 +43,131 @@ runRelease = function(s, codebase){
             
             for(var i=0; i<xmlFiles.length; i++){
 
-                // Read in the Metrix xml.
+                // Create the job to use in the flow.
+                var filePath = xmlRepository.absPath + "/" + xmlFiles[i]
+                var xmlFile = new File(filePath);
+                var job = s.createNewJob(filePath);
+
+                // Establish some data from the xml.
                 var doc = new Document(xmlRepository.absPath + "/" + xmlFiles[i]);
                 var map = doc.createDefaultMap();
                 var layouts = doc.evalToNodes('//job/layouts/layout', map);
                 var projectID = doc.evalToString('//job/id', map);
+                var width = doc.evalToString('//job/products/product/width', map).replace('"','')/2;
+                var height = doc.evalToString('//job/products/product/height', map).replace('"','');
+                var form = width + 'x' + height
 
                 // Pull the URL from the database.
                 db.history.execute("SELECT * FROM history.details_gang WHERE `gang-number` = '" + projectID + "' order by ID desc;");
 
                 // If the row doesn't exist, skip the job and send a notification.
                 if(!db.history.isRowAvailable()){
-                    newCSV.setPrivateData("message","Undefined");
-                    newCSV.setPrivateData("status","undefined");
-                    newCSV.setPrivateData("error", "Gang not found in history database.");
-                    newCSV.setPrivateData("channel","Prisma Updates");
-                    newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
+                    job.setPrivateData("message","Undefined");
+                    job.setPrivateData("status","undefined");
+                    job.setPrivateData("error", "Gang not found in history database.");
+                    job.setPrivateData("channel","Prisma Updates");
+                    job.setUserEmail("Unknown")
+                    job.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
                     continue;
                 }
 
-                // Pull the row data.
+                // Fetch the row.
                 db.history.fetchRow();
+
+                // Add the user to the job.
+                job.setUserEmail(db.history.getString(12));
+
+                // Establish some variables to populate.
+                var signatures = []
+                var cover, coverCommand, signatureCommand
+                var stock = {
+                    signature: null,
+                    cover: null
+                }
 
                 // Assign some values from the database.
                 var virtualPrinter = db.history.getString(25);
                 var dueDate = db.history.getString(6);
-
-                // Create the job to use in the flow.
-                var filePath = xmlRepository.absPath + "/" + xmlFiles[i]
-                var newCSV = s.createNewJob(filePath);
-                    newCSV.setUserEmail(db.history.getString(12));
+                var separateCover = {
+                    enabled: db.history.getString(26) == 'y',
+                    value: db.history.getString(27)
+                }
 
                 // Target the files in the correct repository.
                 var pdfRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID);
                 var pdfFiles = pdfRepository.entryList("*.pdf", Dir.Files, Dir.Name);
 
-                var send = false;
-
                 // If all of the files are in the repository, compile and send to Prisma.
                 if(pdfFiles.length == layouts.length){
+
+                    // If the layout length is too long, it needs a custom upload from Bret.
+                    // This is just temporary, to be fixed immediately.
+                    if(layouts.length > 9){
+                        job.setPrivateData("message","Escalated");
+                        job.setPrivateData("status","escalated");
+                        job.setPrivateData("error", "Gang will be manually uploaded by Bret.");
+                        job.setPrivateData("channel","Prisma Updates");
+                        job.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
+                        continue;
+                    }
 
                     // Assemple some data.
                     count = doc.evalToString('//job/layouts/layout/run-length', map);
                     height = 0;
-                    stock = virtualPrinter + "_80m"
 
+                    // Add the height onto the stock name.
+                    stock.cover = separateCover.value + "_80m"
+                    stock.signature = virtualPrinter + "_80m"
+
+                    // Set the max quantity allowed on the Canon.
                     if(count > 32767){
                         count = 32767
                     }
 
-                    // Create the VM template file
-                    var octFile = new File(pdfRepository.path + "/" + stock + ".oct");
+                    // Create the VM template file for the signature page.
+                    var octFile = new File(pdfRepository.path + "/" + stock.signature + ".oct");
                     if(octFile.exists){
                         octFile.remove()
                     }
                         octFile.open(File.Append);
                         octFile.writeLine('[job]')
-                        octFile.writeLine('Printer_Setup_Name=' + stock)
+                        octFile.writeLine('Printer_Setup_Name=' + stock.signature)
                         octFile.write('Due_Date=' + dueDate + 'T00:00:00-06:00')
                         octFile.close();
 
-                    // Add the full path to the file names.
-                    for (var i = 0; i < pdfFiles.length; i++) {
-                        pdfFiles[i] = "C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i];
+                    // Create the VM template file for the cover page.
+                    if(separateCover.enabled){
+                        var octFile = new File(pdfRepository.path + "/" + stock.cover + ".oct");
+                        if(octFile.exists){
+                            octFile.remove()
+                        }
+                            octFile.open(File.Append);
+                            octFile.writeLine('[job]')
+                            octFile.writeLine('Printer_Setup_Name=' + stock.cover)
+                            octFile.write('Due_Date=' + dueDate + 'T00:00:00-06:00')
+                            octFile.close();
                     }
 
-                    // Create the cmd line.
-                    var command = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock + '.oct -jn ' + projectID + ' -nc ' + count + ' -f ' + pdfFiles.toString().replace(/,/g,' ');
+                    // Add the full path to the file names.
+                    for(var i=0; i<pdfFiles.length; i++){
+                        if(separateCover.enabled){
+                            if(i==0){
+                                cover = "C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i];
+                            }else{
+                                signatures.push("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i]);
+                            }
+                        }else{
+                            signatures.push("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i]);
+                        }
+                    }
+
+                    // Create the cmd line for the signature pages.
+                    signatureCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock.signature + '.oct -jn ' + projectID + ' -form ' + form + ' -nc ' + count + ' -f ' + signatures.toString().replace(/,/g,' ');
+
+                    // Create the cmd line for the cover page.
+                    if(separateCover.enabled){
+                        coverCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock.cover + '.oct -jn ' + projectID + '-cover' + ' -form ' + form + ' -nc ' + count + ' -f ' + cover.toString().replace(/,/g,' ');
+                    }
 
                     if(debug){
                         s.log(-1, command)
@@ -118,27 +179,40 @@ runRelease = function(s, codebase){
                         batFile.remove()
                     }
                         batFile.open(File.Append);
-                        batFile.writeLine(command)
-                        batFile.close()
+                        batFile.writeLine(signatureCommand);
+                        if(separateCover.enabled){
+                            batFile.writeLine(coverCommand);
+                        }
+                        batFile.close();
 
                     // Automatically execute the command.
                     if(transfer){
                         Process.execute("C:\\Switch\\Landing\\CanonPrismaServer\\repository\\" + projectID + "\\initiate-transfer.bat")
                         if(Process.stderr == ""){
-                            newCSV.setPrivateData("message","Transferred Successfully");
-                            newCSV.setPrivateData("status","complete");
-                            newCSV.setPrivateData("error", "None");
-                            newCSV.setPrivateData("channel","Prisma Done");
+                            job.setPrivateData("message","Transferred Successfully");
+                            job.setPrivateData("status","complete");
+                            job.setPrivateData("error", "None");
+                            job.setPrivateData("channel","Prisma Done");
                         }else{
-                            newCSV.setPrivateData("message","Transfer Failed");
-                            newCSV.setPrivateData("status","failed");
-                            newCSV.setPrivateData("error", Process.stderr);
-                            newCSV.setPrivateData("channel","Prisma Fail")
+                            job.setPrivateData("message","Transfer Failed");
+                            job.setPrivateData("status","failed");
+                            job.setPrivateData("error", Process.stderr);
+                            job.setPrivateData("channel","Prisma Fail")
                         }
-                        newCSV.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
+                        job.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
                     }
                 }else{
-                    s.log(2, "Missing layouts: " + projectID)
+
+                    // Check if enough time has passed to move the file from the queue.
+                    var modified = new Date(xmlFile.lastModified);
+                    if(now.getTime() - modified.getTime() > threshold){
+                        job.setPrivateData("message","Threshold");
+                        job.setPrivateData("status","threshold");
+                        job.setPrivateData("error", "Missing layouts and time threshold has been met, moving out of queue.");
+                        job.setPrivateData("channel","Prisma Updates");
+                        job.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
+                        continue;
+                    }
                 }
             }
                 
