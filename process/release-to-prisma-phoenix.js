@@ -1,5 +1,5 @@
 runRelease = function(s, codebase){
-    function release(s, codebase){
+    function release(s, codebase, retried){
         try{
             var dir = {
                 support: "C:/Scripts/" + codebase + "/switch/process/support/"
@@ -94,22 +94,23 @@ runRelease = function(s, codebase){
                 }
 
                 // Target the files in the correct repository.
-                var pdfRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID);
-                var pdfFiles = pdfRepository.entryList("*.pdf", Dir.Files, Dir.Name);
+                //var pdfRepository = new Dir("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID);
+                var dir = {
+                    print: new Dir("//amz-impsw-data/IMPSW_DATA/Backup/" + projectID + "/Print/"),
+                    summary: new Dir("//amz-impsw-data/IMPSW_DATA/Backup/" + projectID + "/Summary/")
+                }
+
+                var pdfFiles = dir.print.entryList("*.pdf", Dir.Files, Dir.Name);
+
+                // Sort the files in the correct order.
+                pdfFiles.sort(function(a, b) {
+                    var numA = parseInt(a.split("-")[1].split("_")[0], 10);
+                    var numB = parseInt(b.split("-")[1].split("_")[0], 10);
+                    return numA - numB;
+                });
 
                 // If all of the files are in the repository, compile and send to Prisma.
                 if(pdfFiles.length == layouts.length){
-
-                    // If the layout length is too long, it needs a custom upload from Bret.
-                    // This is just temporary, to be fixed immediately.
-                    if(layouts.length > 9){
-                        job.setPrivateData("message","Escalated");
-                        job.setPrivateData("status","escalated");
-                        job.setPrivateData("error", "Gang will be manually uploaded by Bret.");
-                        job.setPrivateData("channel","Prisma Updates");
-                        job.sendTo(findConnectionByName_db(s, "Webhook"), filePath);
-                        continue;
-                    }
 
                     // Assemple some data.
                     count = doc.evalToString('//job/layouts/layout/run-length', map);
@@ -125,7 +126,7 @@ runRelease = function(s, codebase){
                     }
 
                     // Create the VM template file for the signature page.
-                    var octFile = new File(pdfRepository.path + "/" + stock.signature + ".oct");
+                    var octFile = new File(dir.summary.path + "/" + stock.signature + ".oct");
                     if(octFile.exists){
                         octFile.remove()
                     }
@@ -137,7 +138,7 @@ runRelease = function(s, codebase){
 
                     // Create the VM template file for the cover page.
                     if(separateCover.enabled){
-                        var octFile = new File(pdfRepository.path + "/" + stock.cover + ".oct");
+                        var octFile = new File(dir.summary.path + "/" + stock.cover + ".oct");
                         if(octFile.exists){
                             octFile.remove()
                         }
@@ -152,29 +153,30 @@ runRelease = function(s, codebase){
                     for(var i=0; i<pdfFiles.length; i++){
                         if(separateCover.enabled){
                             if(i==0){
-                                cover = "C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i];
+                                cover = dir.print.path + "/" + pdfFiles[i];
                             }else{
-                                signatures.push("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i]);
+                                signatures.push(dir.print.path + "/" + pdfFiles[i]);
                             }
                         }else{
-                            signatures.push("C:/Switch/Landing/CanonPrismaServer/repository/" + projectID + "/" + pdfFiles[i]);
+                            signatures.push(dir.print.path + "/" + pdfFiles[i]);
                         }
                     }
 
+                    var test = ""
+                    if(debug){
+                        test = "-test"
+                    }
+
                     // Create the cmd line for the signature pages.
-                    signatureCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock.signature + '.oct -jn ' + projectID + ' -form ' + form + ' -nc ' + count + ' -f ' + signatures.toString().replace(/,/g,' ');
+                    signatureCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct ' + dir.summary.path + '/' + stock.signature + '.oct -jn ' + projectID + test + ' -form ' + form + ' -nc ' + count + ' -f ' + signatures.toString().replace(/,/g,' ');
 
                     // Create the cmd line for the cover page.
                     if(separateCover.enabled){
-                        coverCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct C:/Switch/Landing/CanonPrismaServer/repository/' + projectID + '/' + stock.cover + '.oct -jn ' + projectID + '-cover' + ' -form ' + form + ' -nc ' + count + ' -f ' + cover.toString().replace(/,/g,' ');
-                    }
-
-                    if(debug){
-                        s.log(-1, command)
+                        coverCommand = 'C:/Scripts/prod/canon-prostream/support/spjm -s spjmUser@10.2.32.220 -user service -pwd service -t C:/Scripts/prod/canon-prostream/boilerplate/Duplex-Template.tic -oct ' + dir.summary.path + '/' + stock.cover + '.oct -jn ' + projectID + test + '-cover' + ' -form ' + form + ' -nc ' + count + ' -f ' + cover.toString().replace(/,/g,' ');
                     }
 
                     // Write bat file.
-                    var batFile = new File(pdfRepository.path + "/initiate-transfer.bat");
+                    var batFile = new File(dir.summary.path + "/initiate-transfer.bat");
                     if(batFile.exists){
                         batFile.remove()
                     }
@@ -187,7 +189,7 @@ runRelease = function(s, codebase){
 
                     // Automatically execute the command.
                     if(transfer){
-                        Process.execute("C:\\Switch\\Landing\\CanonPrismaServer\\repository\\" + projectID + "\\initiate-transfer.bat")
+                        Process.execute(dir.summary.path + "/initiate-transfer.bat")
                         if(Process.stderr == ""){
                             job.setPrivateData("message","Transferred Successfully");
                             job.setPrivateData("status","complete");
@@ -217,10 +219,14 @@ runRelease = function(s, codebase){
             }
                 
         }catch(e){
+            if(!retried){
+                s.log(2, "Retrying...")
+                parser(s, job, codebase, true)
+            }
             s.log(2, "Critical Error!: " + e);
         }
     }
-    release(s, codebase)
+    release(s, codebase, false)
 }
 
 // Copied from the main support functions file.
